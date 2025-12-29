@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgrouting/pgrouting:latest
+    container_name: sophie_db
+    restart: always
+    environment:
+      POSTGRES_DB: navigation
+      POSTGRES_USER: sophie
+      POSTGRES_PASSWORD: secure_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - nav-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sophie -d navigation"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postgrest:
+    image: postgrest/postgrest:latest
+    container_name: sophie_api
+    restart: always
+    environment:
+      PGRST_DB_URI: postgres://sophie:secure_password@db:5432/navigation
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: sophie
+      # Optional: Limit max rows
+      # PGRST_MAX_ROWS: 1000
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - nav-net
+
+  import:
+    build: ./import
+    container_name: sophie_import
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: navigation
+      POSTGRES_USER: sophie
+      POSTGRES_PASSWORD: secure_password
+      # Name of the OSM file in ./data folder
+      OSM_FILE: berlin.osm.pbf
+    volumes:
+      - ./data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - nav-net
+
+  frontend:
+    build: ./frontend
+    container_name: sophie_frontend
+    ports:
+      - "8080:80"
+    networks:
+      - nav-net
+
+volumes:
+  pgdata:
+
+networks:
+  nav-net:

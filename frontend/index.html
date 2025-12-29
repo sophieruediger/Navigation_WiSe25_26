@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Sophie Navigation</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css" type="text/css">
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; }
+        .map { height: 80vh; width: 100%; }
+        #controls { height: 20vh; padding: 20px; box-sizing: border-box; background-color: #f8f9fa; border-top: 1px solid #ddd; }
+        .input-group { margin-bottom: 10px; }
+        label { display: inline-block; width: 120px; }
+        input { padding: 5px; width: 200px; }
+        button { padding: 5px 15px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; }
+        button:hover { background-color: #0056b3; }
+        #status { margin-top: 10px; font-weight: bold; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
+</head>
+<body>
+    <div id="map" class="map"></div>
+    <div id="controls">
+        <div class="input-group">
+            <label for="start">Start (Lon, Lat):</label>
+            <input type="text" id="start" value="13.3616929, 52.4031588" placeholder="13.xxx, 52.xxx">
+        </div>
+        <div class="input-group">
+            <label for="end">End (Lon, Lat):</label>
+            <input type="text" id="end" value="13.3622796, 52.4020178" placeholder="13.xxx, 52.xxx">
+        </div>
+        <button onclick="calculateRoute()">Calculate Route</button>
+        <div id="status">Total Cost: -</div>
+    </div>
+
+    <script>
+        // Initialize Map
+        const map = new ol.Map({
+            target: 'map',
+            layers: [
+                new ol.layer.Tile({
+                    source: new ol.source.OSM()
+                })
+            ],
+            view: new ol.View({
+                center: ol.proj.fromLonLat([13.4050, 52.5200]), // Berlin
+                zoom: 13
+            })
+        });
+
+        const vectorSource = new ol.source.Vector();
+        const vectorLayer = new ol.layer.Vector({
+            source: vectorSource,
+            style: new ol.style.Style({
+                stroke: new ol.style.Stroke({
+                    color: 'blue',
+                    width: 4
+                })
+            })
+        });
+        map.addLayer(vectorLayer);
+
+        // Add click interaction to set start/end points
+        let clickState = 'start'; // or 'end'
+
+        map.on('click', function(evt) {
+            const coords = ol.proj.toLonLat(evt.coordinate);
+            const lon = coords[0].toFixed(6);
+            const lat = coords[1].toFixed(6);
+
+            if (clickState === 'start') {
+                document.getElementById('start').value = `${lon}, ${lat}`;
+                clickState = 'end';
+            } else {
+                document.getElementById('end').value = `${lon}, ${lat}`;
+                clickState = 'start';
+            }
+        });
+
+        async function calculateRoute() {
+            const startInput = document.getElementById('start').value.split(',');
+            const endInput = document.getElementById('end').value.split(',');
+
+            if (startInput.length !== 2 || endInput.length !== 2) {
+                alert("Please enter valid coordinates (Lon, Lat)");
+                return;
+            }
+
+            const x1 = parseFloat(startInput[0]);
+            const y1 = parseFloat(startInput[1]);
+            const x2 = parseFloat(endInput[0]);
+            const y2 = parseFloat(endInput[1]);
+
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerText = "Calculating...";
+            vectorSource.clear();
+
+            const url = `/api/rpc/route?x1=${x1}&y1=${y1}&x2=${x2}&y2=${y2}`;
+            console.log("Fetching:", url);
+
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    const text = await response.text();
+                    throw new Error(`API Error: ${response.status} ${response.statusText} - ${text}`);
+                }
+
+                const data = await response.json();
+                console.log("Data received:", data);
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    statusDiv.innerText = "No route found (empty response).";
+                    return;
+                }
+
+                const format = new ol.format.GeoJSON();
+                let totalCost = 0;
+
+                data.forEach(segment => {
+                    if (segment.geojson) {
+                        const feature = format.readFeature(JSON.parse(segment.geojson), {
+                            dataProjection: 'EPSG:4326',
+                            featureProjection: 'EPSG:3857'
+                        });
+                        vectorSource.addFeature(feature);
+                    }
+                    if (segment.cost) {
+                        totalCost += segment.cost;
+                    }
+                });
+
+                statusDiv.innerText = `Total Cost: ${totalCost.toFixed(2)} meters`;
+
+                // Zoom to extent
+                const extent = vectorSource.getExtent();
+                if (!ol.extent.isEmpty(extent)) {
+                    map.getView().fit(extent, { padding: [50, 50, 50, 50] });
+                }
+
+            } catch (error) {
+                console.error(error);
+                statusDiv.innerText = "Error calculating route. Check console.";
+            }
+        }
+    </script>
+</body>
+</html>
+
